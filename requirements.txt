@@ -1,2 +1,6 @@
 akshare
 akquant
+selenium
+webdriver-manager
+playwright
+matplotlib
