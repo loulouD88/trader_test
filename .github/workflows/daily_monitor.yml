@@ -2,21 +2,20 @@ name: Daily ETF Monitor
 
 on:
   schedule:
-    # UTC 时间 12:00 对应北京时间 20:00（注意夏令时可能有一小时偏差）
-    - cron: '0 12 * * *'
-  workflow_dispatch:  # 允许手动触发，方便测试
+    - cron: '0 12 * * *'   # UTC 12:00 = 北京时间 20:00
+  workflow_dispatch:        # 允许手动触发
 
 jobs:
   run-daily-monitor:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 允许推送到仓库
+      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # 获取完整历史，以便推回
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -25,7 +24,11 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          # 直接安装所有必要依赖（包括 scipy）
+          pip install pandas numpy akshare scipy openpyxl
+          # 如果存在 requirements.txt 也安装
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run daily monitor script
         run: python daily_monitor.py
@@ -34,8 +37,6 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          # 添加可能被更新的目录（可根据实际需要调整）
           git add data/ fund_flow_data/ reports/
-          # 如果有变更则提交，否则跳过
           git diff --staged --quiet || git commit -m "Daily update from GitHub Actions [skip ci]"
           git push
