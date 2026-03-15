@@ -35,6 +35,7 @@ def get_etf_data(symbol):
     :return: 基金ETF历史数据的 DataFrame
     获得的数据是正序的，最新日期在最后一行，最旧日期在第一行。
     """
+
     df = ak.fund_etf_hist_sina(symbol=symbol)
     df['date'] = pd.to_datetime(df['date'])
 
@@ -103,4 +104,7 @@ def calc_turnover_cost_line(df, date_col='date', price_col='close', turnover_col
 
     df['turnover_cost_line'] = cost_line
     return df
+
+
+
 
