@@ -3,6 +3,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-data/
+#data/
 .env
 .DS_Store
