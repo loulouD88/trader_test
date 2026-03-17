@@ -23,8 +23,8 @@ from etf_relative_strength import (
 from new_etf_fund_flow_analyze import FundFlowTimeSeriesAnalyzer
 from etf_volume_analyze import analyze_volume
 from margin_data import MarginDataUpdater, sentiment_from_margin_file
-# 新增导入风格轮动模块
-from style_rotation import style_rotation_monitor
+# 新增导入风格轮动模块和分类字典
+from style_rotation import style_rotation_monitor, CLASSIFICATION
 
 # -------------------- 配置 --------------------
 ETF_LIST_FILE = 'data/etf_top1_by_category.csv'
@@ -139,6 +139,59 @@ sentiment_df = pd.DataFrame([sentiment])
 print("\n【风格轮动】")
 style_result, _ = style_rotation_monitor(price_df, etf_info, window=5, long_window=20)
 
+# 解析风格结论，得到走强的风格列表
+strong_styles = []
+if style_result is not None and '风格结论' in style_result.columns:
+    conclusion_str = style_result.iloc[0]['风格结论']
+    if '价值相对走强' in conclusion_str:
+        strong_styles.append('价值')
+    if '成长相对走强' in conclusion_str:
+        strong_styles.append('成长')
+    if '周期相对走强' in conclusion_str:
+        strong_styles.append('周期')
+    if '防御相对走强' in conclusion_str:
+        strong_styles.append('防御')
+    if '大盘相对走强' in conclusion_str:
+        strong_styles.append('大盘')
+    if '小盘相对走强' in conclusion_str:
+        strong_styles.append('小盘')
+    if '上游相对走强' in conclusion_str:
+        strong_styles.append('上游')
+    if '下游相对走强' in conclusion_str:
+        strong_styles.append('下游')
+
+# 为 rs_result 添加风格分类列
+# 建立小类到分类的映射字典
+subclass_to_styles = {}
+for sub, info in CLASSIFICATION.items():
+    subclass_to_styles[sub] = info
+
+def get_style_category(row, key):
+    sub = row['小类']
+    if sub in subclass_to_styles:
+        return subclass_to_styles[sub].get(key, '-')
+    return '-'
+
+rs_result['价值/成长'] = rs_result.apply(lambda row: get_style_category(row, 'value_growth'), axis=1)
+rs_result['周期/防御'] = rs_result.apply(lambda row: get_style_category(row, 'cycle_defensive'), axis=1)
+rs_result['大盘/小盘'] = rs_result.apply(lambda row: get_style_category(row, 'cap'), axis=1)
+rs_result['上游/下游'] = rs_result.apply(lambda row: get_style_category(row, 'chain'), axis=1)
+
+# 生成风格匹配列：如果该ETF的某一风格在 strong_styles 中，则标记
+def style_match(row):
+    match = []
+    if row['价值/成长'] in strong_styles:
+        match.append(row['价值/成长'])
+    if row['周期/防御'] in strong_styles:
+        match.append(row['周期/防御'])
+    if row['大盘/小盘'] in strong_styles:
+        match.append(row['大盘/小盘'])
+    if row['上游/下游'] in strong_styles:
+        match.append(row['上游/下游'])
+    return '、'.join(match) if match else '-'
+
+rs_result['风格匹配'] = rs_result.apply(style_match, axis=1)
+
 # -------------------- 生成报告 --------------------
 print("\n" + "="*50)
 print("生成报告...")
@@ -170,11 +223,15 @@ with pd.ExcelWriter(OUTPUT_REPORT, engine='openpyxl') as writer:
     # 情绪指标
     sentiment_df.to_excel(writer, sheet_name='情绪指标', index=False)
 
-    # ETF综合信息（合并相对强度和成交量状态）
+    # ETF综合信息（合并相对强度和成交量状态，并包含风格列）
     combined = rs_result.merge(
         vol_result[['成交量状态', '量比趋势', '连续放量天数']],
         left_on='基金代码', right_index=True, how='left'
     )
+    # 调整列顺序，让风格列靠前
+    col_order = ['基金代码', '基金简称', '小类', '价值/成长', '周期/防御', '大盘/小盘', '上游/下游', '风格匹配',
+                 '综合得分', '排名', '最新收盘价', '成交量状态', '量比趋势', '连续放量天数']
+    combined = combined[col_order]
     combined.to_excel(writer, sheet_name='ETF综合信息', index=False)
 
     # 风格轮动（新增工作表）
