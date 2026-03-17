@@ -23,6 +23,8 @@ from etf_relative_strength import (
 from new_etf_fund_flow_analyze import FundFlowTimeSeriesAnalyzer
 from etf_volume_analyze import analyze_volume
 from margin_data import MarginDataUpdater, sentiment_from_margin_file
+# 新增导入风格轮动模块
+from style_rotation import style_rotation_monitor
 
 # -------------------- 配置 --------------------
 ETF_LIST_FILE = 'data/etf_top1_by_category.csv'
@@ -133,6 +135,10 @@ print("\n【情绪指标】")
 sentiment = sentiment_from_margin_file('data/margin_data.csv', years=1)
 sentiment_df = pd.DataFrame([sentiment])
 
+# ---- 6. 风格轮动（新增） ----
+print("\n【风格轮动】")
+style_result, _ = style_rotation_monitor(price_df, etf_info, window=5, long_window=20)
+
 # -------------------- 生成报告 --------------------
 print("\n" + "="*50)
 print("生成报告...")
@@ -170,6 +176,10 @@ with pd.ExcelWriter(OUTPUT_REPORT, engine='openpyxl') as writer:
         left_on='基金代码', right_index=True, how='left'
     )
     combined.to_excel(writer, sheet_name='ETF综合信息', index=False)
+
+    # 风格轮动（新增工作表）
+    if style_result is not None:
+        style_result.to_excel(writer, sheet_name='风格轮动', index=False)
 
 print(f"报告已保存至: {OUTPUT_REPORT}")
 print("所有分析完成。")
