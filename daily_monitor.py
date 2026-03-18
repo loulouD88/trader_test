@@ -23,7 +23,6 @@ from etf_relative_strength import (
 from new_etf_fund_flow_analyze import FundFlowTimeSeriesAnalyzer
 from etf_volume_analyze import analyze_volume
 from margin_data import MarginDataUpdater, sentiment_from_margin_file
-# 新增导入风格轮动模块和分类字典
 from style_rotation import style_rotation_monitor, CLASSIFICATION
 
 # -------------------- 配置 --------------------
@@ -89,17 +88,22 @@ norm_factors = normalize_factors(factors)
 composite = compute_composite(norm_factors, RS_WEIGHTS)
 latest_date = composite.index[-1]
 latest_scores = composite.loc[latest_date].sort_values(ascending=False)
+
+# 构建rs_result，包含最新收盘价
 rs_result = pd.DataFrame({
     '基金代码': latest_scores.index,
     '综合得分': latest_scores.values,
     '排名': latest_scores.rank(ascending=False).astype(int)
 })
 rs_result = rs_result.merge(etf_info[['基金代码', '基金简称', '小类']], on='基金代码', how='left')
+# 添加最新收盘价
+latest_price_series = price_df.loc[latest_date]
+rs_result['最新收盘价'] = rs_result['基金代码'].map(latest_price_series)
 rs_result = rs_result.sort_values('排名').reset_index(drop=True)
 
 # ---- 2. 市场宽度（含仓位建议） ----
 print("\n【市场宽度】")
-breadth = advanced_market_breadth(price_df, volume_df)   # 返回字典，包含'仓位建议'
+breadth = advanced_market_breadth(price_df, volume_df)
 breadth_df = pd.DataFrame([breadth])
 
 # ---- 3. 成交量异动 ----
@@ -120,11 +124,9 @@ for period in FUND_FLOW_PERIODS:
     print(f"  分析 {period} 周期...")
     res_df, report_text = fund_analyzer.analyze(period=period, window=20, short_window=5, long_window=20, rank_window=5)
     if res_df is not None and not res_df.empty:
-        # 按最新排名升序（排名1在上）
         if '最新排名' in res_df.columns:
             res_df = res_df.sort_values('最新排名', ascending=True)
         else:
-            # 降级按动量排序
             if '动量(短-长)' in res_df.columns:
                 res_df = res_df.sort_values('动量(短-长)', ascending=False)
         fund_results[period] = res_df
@@ -135,11 +137,11 @@ print("\n【情绪指标】")
 sentiment = sentiment_from_margin_file('data/margin_data.csv', years=1)
 sentiment_df = pd.DataFrame([sentiment])
 
-# ---- 6. 风格轮动（新增） ----
+# ---- 6. 风格轮动 ----
 print("\n【风格轮动】")
 style_result, _ = style_rotation_monitor(price_df, etf_info, window=5, long_window=20)
 
-# 解析风格结论，得到走强的风格列表
+# 解析风格结论
 strong_styles = []
 if style_result is not None and '风格结论' in style_result.columns:
     conclusion_str = style_result.iloc[0]['风格结论']
@@ -160,8 +162,7 @@ if style_result is not None and '风格结论' in style_result.columns:
     if '下游相对走强' in conclusion_str:
         strong_styles.append('下游')
 
-# 为 rs_result 添加风格分类列
-# 建立小类到分类的映射字典
+# 添加风格分类列
 subclass_to_styles = {}
 for sub, info in CLASSIFICATION.items():
     subclass_to_styles[sub] = info
@@ -177,7 +178,6 @@ rs_result['周期/防御'] = rs_result.apply(lambda row: get_style_category(row,
 rs_result['大盘/小盘'] = rs_result.apply(lambda row: get_style_category(row, 'cap'), axis=1)
 rs_result['上游/下游'] = rs_result.apply(lambda row: get_style_category(row, 'chain'), axis=1)
 
-# 生成风格匹配列：如果该ETF的某一风格在 strong_styles 中，则标记
 def style_match(row):
     match = []
     if row['价值/成长'] in strong_styles:
@@ -200,17 +200,17 @@ with pd.ExcelWriter(OUTPUT_REPORT, engine='openpyxl') as writer:
     # 相对强度排名（前50）
     rs_result.head(50).to_excel(writer, sheet_name='相对强度Top50', index=False)
 
-    # 市场宽度（含仓位建议）
+    # 市场宽度
     breadth_df.to_excel(writer, sheet_name='市场宽度', index=False)
 
-    # 成交量异动（仅显示非正常状态的ETF）
+    # 成交量异动
     vol_abnormal = vol_result[vol_result['成交量状态'] != '正常']
     if not vol_abnormal.empty:
         vol_abnormal.to_excel(writer, sheet_name='成交量异动', index=True)
     else:
         vol_result.head(20).to_excel(writer, sheet_name='成交量异动', index=True)
 
-    # 资金流向：每个周期一个工作表，报告在上，表格在下（动态调整行距）
+    # 资金流向
     for period, df in fund_results.items():
         sheet_name = f'资金流向_{period}'
         report_lines = fund_reports[period].strip().split('\n')
@@ -223,18 +223,21 @@ with pd.ExcelWriter(OUTPUT_REPORT, engine='openpyxl') as writer:
     # 情绪指标
     sentiment_df.to_excel(writer, sheet_name='情绪指标', index=False)
 
-    # ETF综合信息（合并相对强度和成交量状态，并包含风格列）
-    combined = rs_result.merge(
-        vol_result[['成交量状态', '量比趋势', '连续放量天数']],
-        left_on='基金代码', right_index=True, how='left'
-    )
-    # 调整列顺序，让风格列靠前
+    # ETF综合信息
+    # 合并成交量状态，注意避免列名冲突
+    vol_subset = vol_result[['成交量状态', '量比趋势', '连续放量天数']].reset_index()
+    combined = rs_result.merge(vol_subset, on='基金代码', how='left')
+    # 调整列顺序
     col_order = ['基金代码', '基金简称', '小类', '价值/成长', '周期/防御', '大盘/小盘', '上游/下游', '风格匹配',
                  '综合得分', '排名', '最新收盘价', '成交量状态', '量比趋势', '连续放量天数']
+    # 确保所有列都存在
+    for col in col_order:
+        if col not in combined.columns:
+            combined[col] = np.nan
     combined = combined[col_order]
     combined.to_excel(writer, sheet_name='ETF综合信息', index=False)
 
-    # 风格轮动（新增工作表）
+    # 风格轮动
     if style_result is not None:
         style_result.to_excel(writer, sheet_name='风格轮动', index=False)
 
